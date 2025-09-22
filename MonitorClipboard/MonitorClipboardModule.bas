@@ -16,27 +16,37 @@ Private Const GWL_WNDPROC As Long = -4
 
 Private hwndNextViewer As LongPtr
 Private prevWndProc As LongPtr
-Private isMonitoring As Boolean
+Public isMonitoring As Boolean
 Private status As Integer
+Private formStatus As Boolean
 
-Public Sub ToggleClipboardMonitor()
-    If isMonitoring Then
-        SetWindowLongPtr Application.hwnd, GWL_WNDPROC, prevWndProc
-        RemoveClipboardFormatListener (Application.hwnd)
-        isMonitoring = False
-        MsgBox "Clipboard Monitor End", vbInformation
-        ClearStatus
+Public Sub showForm()
+    UserForm1.Show
+End Sub
+
+Public Sub StartMonitor()
+    AddClipboardFormatListener (Application.hwnd)
+    ' Excel窗口句柄
+    Debug.Print "Application.hwnd:" & Application.hwnd
+    Debug.Print "WindowProc:" & Hex(AddressOf WindowProc)
+    prevWndProc = SetWindowLongPtr(Application.hwnd, GWL_WNDPROC, AddressOf WindowProc)
+    Debug.Print "SetWindowLongPtr: " & GetLastError()
+    isMonitoring = True
+    formStatus = UserForm1.OptionButton1.Value
+    UserForm1.Hide
+    MsgBox "Clipboard Monitor Start", vbInformation
+    If formStatus = True Then
+        UpdateStatus "(標準モード)"
     Else
-        AddClipboardFormatListener (Application.hwnd)
-        ' Excel窗口句柄
-        Debug.Print "Application.hwnd:" & Application.hwnd
-        Debug.Print "WindowProc:" & Hex(AddressOf WindowProc)
-        prevWndProc = SetWindowLongPtr(Application.hwnd, GWL_WNDPROC, AddressOf WindowProc)
-        Debug.Print "SetWindowLongPtr: " & GetLastError()
-        isMonitoring = True
-        MsgBox "Clipboard Monitor Start", vbInformation
-        UpdateStatus "Clipboard Monitor Start"
+        UpdateStatus "(選択モード)"
     End If
+End Sub
+
+Public Sub EndMonitor()
+    SetWindowLongPtr Application.hwnd, GWL_WNDPROC, prevWndProc
+    RemoveClipboardFormatListener (Application.hwnd)
+    isMonitoring = False
+    ClearStatus
 End Sub
 
 Private Function WindowProc(ByVal hwnd As LongPtr, ByVal Msg As Long, ByVal wParam As LongPtr, ByVal lParam As LongPtr) As LongPtr
@@ -44,7 +54,11 @@ Private Function WindowProc(ByVal hwnd As LongPtr, ByVal Msg As Long, ByVal wPar
         If IsClipboardImage() Then
             status = status + 1
             If status = 2 Then
-                PasteImageToSheet
+                If formStatus = True Then
+                    PasteStandardMode
+                Else
+                    PasteSelectMode
+                End If
                 status = 0
             End If
         End If
@@ -59,6 +73,22 @@ Private Function IsClipboardImage() As Boolean
         CloseClipboard
     End If
 End Function
+
+Private Sub PasteStandardMode()
+    On Error GoTo ErrorHandler
+        Dim nextPicRow As Integer
+        nextPicRow = GetNextPicRow()
+        If nextPicRow = 3 Then
+            ActiveSheet.Paste Destination:=ActiveSheet.Range("B4")
+        Else
+            ActiveSheet.Paste Destination:=ActiveSheet.Range("B" & nextPicRow)
+        End If
+        ActiveSheet.Range("B" & nextPicRow).Select
+        AdjustPic
+        Debug.Print "PasteStandardMode End"
+ErrorHandler:
+    Debug.Print Err.Number & ":" & Err.Description
+End Sub
 
 Private Function GetNextPicRow() As Integer
     Dim dataRowA As Integer
@@ -75,29 +105,44 @@ Private Function GetNextPicRow() As Integer
     GetNextPicRow = Application.WorksheetFunction.Max(dataRowA, dataRowB, picRow) + 2
 End Function
 
-Private Sub PasteImageToSheet()
+Private Sub PasteSelectMode()
     On Error GoTo ErrorHandler
-        Dim nextPicRow As Integer
-        nextPicRow = GetNextPicRow()
-        If nextPicRow = 3 Then
-            ActiveSheet.Paste Destination:=ActiveSheet.Range("B4")
-        Else
-            ActiveSheet.Paste Destination:=ActiveSheet.Range("B" & nextPicRow)
+        If TypeName(Selection) <> "Range" Then
+            Exit Sub
         End If
-        ActiveSheet.Range("B" & nextPicRow).Select
-        Dim pastedImage As Shape
-        Set pastedImage = ActiveSheet.shapes(ActiveSheet.shapes.Count)
-        pastedImage.LockAspectRatio = msoCTrue
-        pastedImage.Width = 1050
+        Dim selectedCell As Range
+        Dim topLeftCell As Range
+        Set selectedCell = Selection
+        Set topLeftCell = Selection.Cells(1, 1)
+        topLeftCell.Select
+        ActiveSheet.Paste
+        AdjustPic
+        Debug.Print "PasteSelectMode End"
 ErrorHandler:
     Debug.Print Err.Number & ":" & Err.Description
 End Sub
 
+Private Sub AdjustPic()
+    Dim pastedImage As Shape
+    Set pastedImage = ActiveSheet.shapes(ActiveSheet.shapes.Count)
+    pastedImage.LockAspectRatio = msoCTrue
+    pastedImage.Width = 1050
+End Sub
+
 Private Sub UpdateStatus(message As String)
-    Application.StatusBar = message & " | " & Format(Now, "hh:mm:ss")
+    Application.StatusBar = "Clipboard Monitor Start" & message & "-" & ActiveWorkbook.Name & " | " & Format(Now, "hh:mm:ss")
 End Sub
 
 
 Private Sub ClearStatus()
     Application.StatusBar = False
 End Sub
+
+'Public Sub ExitClean()
+    'If isMonitoring Then
+        'SetWindowLongPtr Application.hwnd, GWL_WNDPROC, prevWndProc
+        'RemoveClipboardFormatListener (Application.hwnd)
+        'isMonitoring = False
+        'ClearStatus
+    'End If
+'End Sub
